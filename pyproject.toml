@@ -1,0 +1,23 @@
+[project]
+name = "learn-via-youtube-ai"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "MouhamedM", email = "simolovej3@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "groq>=0.11",
+    "requests>=2.31",
+    "streamlit>=1.46",
+    "youtube-transcript-api>=1.0",
+    "yt-dlp>=2024.8.6",
+]
+
+[project.scripts]
+learn-via-youtube-ai = "learn_via_youtube_ai:main"
+
+[build-system]
+requires = ["uv_build>=0.12.9,<0.13.0"]
+build-backend = "uv_build"

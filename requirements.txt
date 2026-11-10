@@ -1,0 +1,6 @@
+streamlit>=1.46
+groq>=0.11
+youtube-transcript-api>=1.0
+requests>=2.31
+yt-dlp>=2024.8.6
+ 
