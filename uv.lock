@@ -312,7 +312,7 @@ requires-dist = [
     { name = "groq", specifier = ">=0.11" },
     { name = "requests", specifier = ">=2.31" },
     { name = "streamlit", specifier = ">=1.46" },
-    { name = "youtube-transcript-api", specifier = ">=1.0" },
+    { name = "youtube-transcript-api", specifier = ">=1.1" },
     { name = "yt-dlp", specifier = ">=2024.8.6" },
 ]
 

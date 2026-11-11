@@ -9,9 +9,11 @@ Files: app.py + locales.json (all UI text lives in locales.json)
 """
 
 import json
+import logging
 import math
 import os
 import re
+import tempfile
 import time
 from collections import Counter
 from pathlib import Path
@@ -19,7 +21,14 @@ from pathlib import Path
 import requests
 import streamlit as st
 from groq import Groq
-from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api import (
+    IpBlocked,
+    NoTranscriptFound,
+    RequestBlocked,
+    TranscriptsDisabled,
+    YouTubeTranscriptApi,
+)
+from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
 
 # --------------------------------------------------------------------------- #
 # i18n: every user-facing string comes from locales.json
@@ -52,6 +61,20 @@ def t(key: str, **kwargs) -> str:
 
 st.set_page_config(page_title=t("app_title"), page_icon="🎬", layout="wide")
 
+@st.cache_resource(show_spinner=False)
+def silence_windows_connection_reset() -> bool:
+    """On Windows, asyncio logs a harmless "ConnectionResetError [WinError 10054]" traceback whenever the
+    browser closes or refreshes a tab. Hide only that message; every other asyncio error is still shown."""
+    def only_real_errors(record: logging.LogRecord) -> bool:
+        exc = record.exc_info[1] if record.exc_info else None
+        return not isinstance(exc, ConnectionResetError)
+
+    logging.getLogger("asyncio").addFilter(only_real_errors)
+    return True
+
+
+silence_windows_connection_reset()
+
 if st.session_state.lang == "ar":
     st.markdown(
         "<style>[data-testid='stChatMessage'], [data-testid='stSidebar'] {direction: rtl;}</style>",
@@ -61,7 +84,7 @@ if st.session_state.lang == "ar":
 # --------------------------------------------------------------------------- #
 # Constants
 # --------------------------------------------------------------------------- #
-AUTHOR_NAME = "Mohammed El Hassani"  # shown in the footer
+AUTHOR_NAME = "✨Mohammed El Hassani"  # shown in the footer
 NON_CHAT_MODEL_HINTS = ("whisper", "tts", "guard", "orpheus", "embed", "playai", "compound", "safeguard")
 MAX_OUTPUT_TOKENS = 1500
 # One model answers every question. Default: the first of these available on the user's key;
@@ -98,7 +121,7 @@ LAYOUT_CSS = """
 .st-key-chat_msgs, [data-testid="stLayoutWrapper"]:has(> .st-key-chat_msgs) {
     flex: 0 0 auto !important; height: calc(var(--stage-h) - var(--chat-chrome)) !important; max-height: none !important; }
 .app-footer { text-align: center; font-size: .8rem; opacity: .7; padding: .8rem 0 .2rem 0; }
-.app-footer.pinned { position: absolute; left: 0; right: 0; bottom: 4px; padding: 0; pointer-events: none; z-index: 1; }
+.app-footer.pinned { position: fixed; left: 0; right: 0; bottom: 4px; padding: 0; pointer-events: none; z-index: 1; }
 [data-testid="stElementContainer"]:has(.app-footer.pinned) { position: absolute; }  /* no flow space, so no layout shift */
 .focus-clock { font-size: 1.3rem; font-weight: 700; white-space: nowrap; }
 .pane-title { font-size: 1.05rem; font-weight: 700; }
@@ -294,13 +317,80 @@ def get_metadata(video_id: str, api_key: str | None) -> dict:
         return {"title": "", "channel": "", "description": "", "published": "", "views": None}
 
 
+BLOCKED_ERRORS = (RequestBlocked, IpBlocked)        # YouTube refuses requests coming from cloud/server IPs
+NO_CAPTION_ERRORS = (TranscriptsDisabled, NoTranscriptFound)
+
+
+def proxy_settings() -> tuple[object | None, str | None]:
+    """Optional proxy, set through secrets / environment variables (needed on most cloud hosts):
+    WEBSHARE_PROXY_USERNAME + WEBSHARE_PROXY_PASSWORD  (rotating residential proxy), or PROXY_URL.
+    Returns (config for youtube-transcript-api, plain proxy URL for yt-dlp / requests)."""
+    user, pwd = secret("WEBSHARE_PROXY_USERNAME"), secret("WEBSHARE_PROXY_PASSWORD")
+    if user and pwd:
+        return (WebshareProxyConfig(proxy_username=user, proxy_password=pwd),
+                f"http://{user}-rotate:{pwd}@p.webshare.io:80/")
+    url = secret("PROXY_URL")
+    if url:
+        return GenericProxyConfig(http_url=url, https_url=url), url
+    return None, None
+
+
+def fetch_transcript_ytdlp(video_id: str) -> list[dict]:
+    """Second way to get captions (yt-dlp), used when the first one is blocked.
+    Honours the same proxy and, optionally, YOUTUBE_COOKIES (a cookies.txt in Netscape format)."""
+    from yt_dlp import YoutubeDL
+
+    _, proxy = proxy_settings()
+    opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+    if proxy:
+        opts["proxy"] = proxy
+    cookies = secret("YOUTUBE_COOKIES")
+    if cookies:
+        path = Path(tempfile.gettempdir()) / "youtube_cookies.txt"
+        path.write_text(cookies, encoding="utf-8")
+        opts["cookiefile"] = str(path)
+    with YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+
+    def pick(tracks: dict) -> dict | None:
+        keys = [k for k in (tracks or {}) if k != "live_chat"]
+        if not keys:
+            return None
+        lang = info.get("language")
+        key = next((k for k in keys if k.endswith("-orig")), None) or (lang if lang in keys else keys[0])
+        return next((f for f in tracks[key] if f.get("ext") == "json3"), None)
+
+    track = pick(info.get("subtitles")) or pick(info.get("automatic_captions"))
+    if not track:
+        raise ValueError("NoCaptions")
+    r = requests.get(track["url"], proxies={"http": proxy, "https": proxy} if proxy else None, timeout=20)
+    r.raise_for_status()
+    snippets = []
+    for ev in r.json().get("events", []):
+        text = "".join(seg.get("utf8", "") for seg in ev.get("segs", [])).strip()
+        if text:
+            snippets.append({"text": text, "start": ev.get("tStartMs", 0) / 1000})
+    return snippets
+
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def get_transcript(video_id: str) -> list[dict]:
-    """Best transcript automatically: human-made first, then auto-generated, any language."""
-    api = YouTubeTranscriptApi()
-    available = sorted(api.list(video_id), key=lambda tr: tr.is_generated)
-    fetched = available[0].fetch()
-    return [{"text": s.text, "start": s.start} for s in fetched]
+    """Best transcript automatically: human-made first, then auto-generated, any language.
+    If YouTube blocks the server, try the yt-dlp route before giving up."""
+    config, _ = proxy_settings()
+    try:
+        api = YouTubeTranscriptApi(proxy_config=config) if config else YouTubeTranscriptApi()
+        available = sorted(api.list(video_id), key=lambda tr: tr.is_generated)
+        fetched = available[0].fetch()
+        return [{"text": s.text, "start": s.start} for s in fetched]
+    except BLOCKED_ERRORS as blocked:
+        try:
+            snippets = fetch_transcript_ytdlp(video_id)
+        except Exception:
+            raise blocked
+        if snippets:
+            return snippets
+        raise blocked
 
 
 # --------------------------------------------------------------------------- #
@@ -652,7 +742,12 @@ if sel and (st.session_state.video is None or st.session_state.video["id"] != se
             st.session_state.autoplay = False
         except Exception as e:
             st.session_state.video = None
-            st.session_state.load_error = t("no_transcript", err=type(e).__name__)
+            if isinstance(e, BLOCKED_ERRORS):
+                st.session_state.load_error = t("transcript_blocked")
+            elif isinstance(e, NO_CAPTION_ERRORS):
+                st.session_state.load_error = t("transcript_none")
+            else:
+                st.session_state.load_error = t("no_transcript", err=type(e).__name__)
             st.session_state.selected_id = None
             st.session_state.view = "results"
 

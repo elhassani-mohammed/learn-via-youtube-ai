@@ -5,7 +5,7 @@
     "interface_language": "Interface language",
     "groq_key": "Groq API key",
     "groq_key_help": "Create one for free at console.groq.com",
-    "youtube_key": "YouTube Data API key Optional",
+    "youtube_key": "YouTube Data API key",
     "youtube_key_help": "Optional. Gives richer search and video details. Without it, search still works.",
     "model": "AI model",
     "model_help": "The AI model that answers your questions.",
@@ -40,7 +40,9 @@
     "timer_reset_help": "Reset the timer",
     "timer_next_help": "Switch to the next task",
     "focus_done": "{task} complete 🎉",
-    "footer": "✨ Created by {author}"
+    "footer": "Created by {author}",
+    "transcript_blocked": "YouTube is blocking caption requests from this server, so this video can't be used for chat right now. Try another video or try again later.",
+    "transcript_none": "This video has no captions, so it can't be used for chat."
   },
   "ar": {
     "language_name": "العربية",
@@ -83,6 +85,8 @@
     "timer_reset_help": "أعد ضبط المؤقت",
     "timer_next_help": "انتقل إلى المهمة التالية",
     "focus_done": "اكتملت مهمة {task} 🎉",
-    "footer": "من تطوير {author}"
+    "footer": "من تطوير {author}",
+    "transcript_blocked": "يحظر يوتيوب طلبات الترجمة النصية القادمة من هذا الخادم، لذا لا يمكن استخدام هذا الفيديو في الدردشة حاليًا. جرّب فيديو آخر أو أعد المحاولة لاحقًا.",
+    "transcript_none": "هذا الفيديو بلا ترجمة نصية، لذا لا يمكن استخدامه في الدردشة."
   }
 }

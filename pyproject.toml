@@ -11,7 +11,7 @@ dependencies = [
     "groq>=0.11",
     "requests>=2.31",
     "streamlit>=1.46",
-    "youtube-transcript-api>=1.0",
+    "youtube-transcript-api>=1.1",
     "yt-dlp>=2024.8.6",
 ]
 
