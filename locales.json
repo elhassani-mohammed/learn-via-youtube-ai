@@ -5,7 +5,7 @@
     "interface_language": "Interface language",
     "groq_key": "Groq API key",
     "groq_key_help": "Create one for free at console.groq.com",
-    "youtube_key": "YouTube Data API key",
+    "youtube_key": "YouTube Data API key Optional",
     "youtube_key_help": "Optional. Gives richer search and video details. Without it, search still works.",
     "model": "AI model",
     "model_help": "The AI model that answers your questions.",
